@@ -1,0 +1,57 @@
+name: Build & Release FontForge Ubuntu Binary Daily
+
+on:
+  workflow_dispatch:     # Allows manual run
+  schedule:
+    - cron: '0 5 * * *'  # Runs at 5:00 UTC every day[4]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies and set up environment
+        run: ./.github/workflows/scripts/setup_linux_deps.sh
+
+      - name: Configure and build FontForge
+        run: |
+          mkdir build && cd build
+          export FFCONFIG="-DCMAKE_INSTALL_PREFIX=$HOME/fontforge_install -DENABLE_FONTFORGE_EXTRAS=ON -DENABLE_FREETYPE_DEBUGGER=$DEPSPREFIX/freetype -DENABLE_X11=ON -DENABLE_GUI=ON"
+          cmake -GNinja $FFCONFIG ..
+          ninja
+
+      - name: Install FontForge
+        run: ninja -C build install
+
+      - name: Pack built binaries
+        run: |
+          mkdir -p dist
+          cp -r $HOME/fontforge_install/bin/fontforge dist/
+          cp -r $HOME/fontforge_install/share/fontforge dist/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fontforge-ubuntu
+          path: dist
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: fontforge-ubuntu
+          path: dist
+
+      - name: Create GitHub Release
+        uses: marvinpinto/action-automatic-releases@latest
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          automatic_release_tag: "daily-ubuntu"
+          prerelease: true
+          title: "Daily Ubuntu Build"
+          files: dist/*
