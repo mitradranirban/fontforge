@@ -1,0 +1,80 @@
+name: Weekly FontForge Build & Release with Upstream Sync
+
+on:
+  schedule:
+    - cron: '0 0 * * FRI'  # Every Friday at 00:00 UTC
+  workflow_dispatch:       # Optional: Allow manual trigger
+
+jobs:
+  sync-fork:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync fork with upstream FontForge
+        uses: tgymnich/fork-sync@v2.0
+        with:
+          owner: Fontforge
+          repo: fontforge
+          base: master     # or your main branch
+          head: master     # or your main branch
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    needs: sync-fork
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies and set up environment
+        run: ./.github/workflows/scripts/setup_linux_deps.sh
+
+      - name: Configure and build FontForge
+        run: |
+          mkdir build && cd build
+          export FFCONFIG="-DCMAKE_INSTALL_PREFIX=$HOME/fontforge_install -DENABLE_FONTFORGE_EXTRAS=ON -DENABLE_FREETYPE_DEBUGGER=$DEPSPREFIX/freetype -DENABLE_X11=ON -DENABLE_GUI=ON"
+          cmake -GNinja $FFCONFIG ..
+          ninja
+
+      - name: Install FontForge
+        run: ninja -C build install
+
+      - name: Pack built binaries
+        run: |
+          mkdir -p dist
+          cp -r $HOME/fontforge_install/bin/fontforge $HOME/fontforge_install/share/fontforge dist/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fontforge-ubuntu
+          path: dist
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.set-release-tag.outputs.release_tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get current date in YYYYMMDD format
+        id: set-release-tag
+        run: echo "release_tag=$(date -u +'%Y%m%d')" >>$GITHUB_OUTPUT
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: fontforge-ubuntu
+          path: binaries
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.set-release-tag.outputs.release_tag }}
+          name: "Release ${{ steps.set-release-tag.outputs.release_tag }}"
+          body: |
+            Automated weekly release of FontForge Ubuntu binaries.
+            Synced with upstream and built on GitHub Actions.
+            Date: `${{ steps.set-release-tag.outputs.release_tag }}`
+          files: binaries/*
